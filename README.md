@@ -59,6 +59,8 @@ bash scripts/build-app.sh
 
 各开发版本的变更见 [CHANGELOG.md](CHANGELOG.md)。遇到问题或提出建议，请通过 [GitHub Issues](https://github.com/Songh0918/Winlay/issues) 反馈，并注明系统版本、键盘型号、连接方式和复现步骤；请勿提交密码或其他敏感信息。
 
+发布新版本时，先更新 `CHANGELOG.md` 中对应的版本说明并提交源码。然后推送形如 `v11` 的 Git 标签，或在 GitHub Actions 中手动运行 “Build and publish release” 并填写版本标签；工作流会构建通用版并将 ZIP 与校验文件作为 Release 附件上传。
+
 ## 许可证
 
 [MIT License](LICENSE)
