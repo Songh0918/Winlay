@@ -3,6 +3,4 @@
 .swiftpm/
 **/xcuserdata/
 *.xcuserstate
-dist/**/*.app/
-dist/Winlay.app/
-dist/**/*.dmg
+dist/

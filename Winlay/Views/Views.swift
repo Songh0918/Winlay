@@ -173,7 +173,7 @@ struct SettingsView: View {
             Text("通用").font(.headline)
             Toggle("在程序坞显示图标", isOn: Binding(get: { model.configuration.effectiveShowDockIcon }, set: { model.setDockIconVisible($0) }))
             Toggle("在菜单栏显示图标", isOn: Binding(get: { model.configuration.effectiveShowMenuBarIcon }, set: { model.setMenuBarIconVisible($0) }))
-            Text("至少保留一个入口；隐藏菜单栏图标时会自动显示程序坞图标。点击程序坞图标可重新打开设置。")
+            Text("两个图标都可隐藏，映射仍在后台工作。重新打开设置：按 ⌘ 空格搜索 Winlay 并打开，或在“应用程序”中再次打开。")
                 .font(.caption).foregroundStyle(.secondary)
             Divider()
             Text("设备检测").font(.headline)
@@ -198,6 +198,7 @@ struct SettingsView: View {
                 .foregroundStyle(.secondary)
             Text("界面跟随系统外观。配置保存在本机，不采集或上传输入内容。")
                 .foregroundStyle(.secondary)
+            Button("退出 Winlay") { NSApp.terminate(nil) }
         }
     }
     private var onboarding: some View {

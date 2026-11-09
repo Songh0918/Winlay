@@ -57,18 +57,24 @@ import ServiceManagement
         guard configurationWritable else { return }
         guard visible != configuration.effectiveShowDockIcon else { return }
         let policy: NSApplication.ActivationPolicy = visible ? .regular : .accessory
+        let currentWindow = NSApp.keyWindow ?? NSApp.mainWindow
+        let wasVisible = currentWindow?.isVisible == true
         guard NSApp.setActivationPolicy(policy) else { errorMessage = "无法更新程序坞图标。"; return }
-        if !visible && !configuration.effectiveShowMenuBarIcon { configuration.showMenuBarIcon = true }
         configuration.showDockIcon = visible
         save()
+        if wasVisible, let window = currentWindow {
+            NSApp.activate(ignoringOtherApps: true)
+            window.makeKeyAndOrderFront(nil)
+            DispatchQueue.main.async { [weak window] in
+                guard let window, !window.isVisible else { return }
+                NSApp.activate(ignoringOtherApps: true)
+                window.makeKeyAndOrderFront(nil)
+            }
+        }
     }
     func setMenuBarIconVisible(_ visible: Bool) {
         guard configurationWritable else { return }
         guard visible != configuration.effectiveShowMenuBarIcon else { return }
-        if !visible && !configuration.effectiveShowDockIcon {
-            guard NSApp.setActivationPolicy(.regular) else { errorMessage = "无法显示程序坞图标，菜单栏入口已保留。"; return }
-            configuration.showDockIcon = true
-        }
         configuration.showMenuBarIcon = visible
         save()
     }

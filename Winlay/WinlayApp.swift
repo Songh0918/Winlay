@@ -20,6 +20,7 @@ import SwiftUI
 final class AppDelegate: NSObject, NSApplicationDelegate {
     weak var model: AppModel?
     var reopenSettings: (() -> Void)?
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         guard let model, model.hasRecovery else { return .terminateNow }
         model.restoreAllMappings()

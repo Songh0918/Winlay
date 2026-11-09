@@ -75,7 +75,7 @@ final class CoreTests: XCTestCase {
         config.deviceRefreshInterval = 0.5
         XCTAssertEqual(config.effectiveDeviceRefreshInterval, 0.5)
         config.showMenuBarIcon = false
-        XCTAssertTrue(config.effectiveShowMenuBarIcon)
+        XCTAssertFalse(config.effectiveShowMenuBarIcon)
         config.showDockIcon = true
         XCTAssertFalse(config.effectiveShowMenuBarIcon)
     }

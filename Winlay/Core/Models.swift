@@ -107,10 +107,7 @@ public struct Configuration: Codable, Equatable {
         return interval
     }
     public var effectiveShowDockIcon: Bool { showDockIcon ?? false }
-    public var effectiveShowMenuBarIcon: Bool {
-        let visible = showMenuBarIcon ?? true
-        return visible || !effectiveShowDockIcon
-    }
+    public var effectiveShowMenuBarIcon: Bool { showMenuBarIcon ?? true }
     public func rules(for device: DeviceIdentity) -> [KeyRule] {
         if let profile = profiles?.first(where: { $0.device == device }) { return profile.rules }
         let enabled = (profiles == nil && selectedDevice == device) ? enabledMappingSources : nil
