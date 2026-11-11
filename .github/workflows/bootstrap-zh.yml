@@ -1,0 +1,24 @@
+name: Publish Chinese localization beta
+on:
+  push:
+    branches: [winlay-beta-zh]
+permissions:
+  contents: write
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify and publish beta
+        run: |
+          set -euo pipefail
+          gh api "repos/$GITHUB_REPOSITORY/git/blobs/d1ab7505431c2431f2b3030cd3a31692eb6db7db" --jq .content | base64 --decode > "$RUNNER_TEMP/Winlay-v13-beta1.zip"
+          printf '%s  %s\n' 7527fefe7abf59e8b0b03ae3c0e85182316b72ed88addfa18d3ab853cdf2cdfb "$RUNNER_TEMP/Winlay-v13-beta1.zip" | sha256sum -c
+          if gh release view v13-beta1 >/dev/null 2>&1; then echo 'Release exists' >&2; exit 1; fi
+          gh release create v13-beta1 "$RUNNER_TEMP/Winlay-v13-beta1.zip" --target "$GITHUB_SHA" --prerelease --title 'Winlay v13-beta1' --notes '修复更新窗口中文显示。'
+          old_sha=$(gh api "repos/$GITHUB_REPOSITORY/contents/appcast.xml?ref=winlay-updates-beta" --jq .sha)
+          export OLD_SHA="$old_sha"
+          python3 -c 'import base64,json,os; print(json.dumps({"message":"Publish Chinese localization beta","branch":"winlay-updates-beta","sha":os.environ["OLD_SHA"],"content":base64.b64encode(open(".github/beta-zh-appcast.xml","rb").read()).decode()}))' > "$RUNNER_TEMP/request.json"
+          gh api --method PUT "repos/$GITHUB_REPOSITORY/contents/appcast.xml" --input "$RUNNER_TEMP/request.json" >/dev/null
