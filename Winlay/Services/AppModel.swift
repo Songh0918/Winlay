@@ -20,6 +20,7 @@ import ServiceManagement
     private var wakeObserver: NSObjectProtocol?
     private var configurationWritable = true
     private var disconnectedDevices: Set<DeviceIdentity> = []
+    private var pendingStartupDevices: Set<DeviceIdentity> = []
 
     init() {
         root = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("Winlay")
@@ -61,6 +62,7 @@ import ServiceManagement
         let wasVisible = currentWindow?.isVisible == true
         guard NSApp.setActivationPolicy(policy) else { errorMessage = "无法更新程序坞图标。"; return }
         configuration.showDockIcon = visible
+        if !visible && configuration.showMenuBarIcon == false { configuration.showMenuBarIcon = true }
         save()
         if wasVisible, let window = currentWindow {
             NSApp.activate(ignoringOtherApps: true)
@@ -74,6 +76,7 @@ import ServiceManagement
     }
     func setMenuBarIconVisible(_ visible: Bool) {
         guard configurationWritable else { return }
+        guard visible || configuration.effectiveShowDockIcon else { errorMessage = "请至少保留一个程序坞或菜单栏图标，以便重新打开 Winlay。"; return }
         guard visible != configuration.effectiveShowMenuBarIcon else { return }
         configuration.showMenuBarIcon = visible
         save()
@@ -93,6 +96,13 @@ import ServiceManagement
         return result
     }
     var hasRecovery: Bool { (try? journalURLs().isEmpty) != true }
+    var hasConnectedRecovery: Bool {
+        guard let urls = try? journalURLs() else { return true }
+        return urls.contains { url in
+            guard let saved = try? FileMappingJournalStore(url: url).load() else { return true }
+            return devices.contains { $0.matchingIdentity == saved.device }
+        }
+    }
     var selectedHasRecovery: Bool {
         guard let identity = configuration.selectedDevice else { return false }
         if FileManager.default.fileExists(atPath: journalURL(identity).path) { return true }
@@ -116,7 +126,9 @@ import ServiceManagement
         if let mappingMessage { return mappingMessage }
         if mappingActive { return "当前键盘的映射已应用；其他键盘可独立设置。" }
         if selectedHasRecovery { return "当前键盘有待恢复的映射，请先恢复。" }
-        guard let device = selectedDevice, let identity = device.matchingIdentity else { return "请选择可识别的键盘。" }
+        guard let device = selectedDevice, let identity = device.matchingIdentity else {
+            return configuration.selectedDevice == nil ? "请选择可识别的键盘。" : "之前选择的键盘未在原连接位置找到；如果更换了接口，请在设备中重新选择键盘并启用映射。"
+        }
         guard identity.isCompatibleGroup(in: devices) else { return "设备标识存在冲突，不能启用映射。" }
         guard !configuration.selectedMappings.isEmpty else { return "请先启用至少一条映射。" }
         return "已选择 \(configuration.selectedMappings.count) 条按键映射。"
@@ -129,10 +141,18 @@ import ServiceManagement
         if !missing.isEmpty { activeDevices.subtract(missing); disconnectedDevices.formUnion(missing); mappingMessage = "键盘已断开；恢复记录已保留，请重新连接后恢复。" }
         let returned = disconnectedDevices.filter { identity in current.contains { $0.matchingIdentity == identity } }
         if !returned.isEmpty { disconnectedDevices.subtract(returned); mappingMessage = "键盘已重新连接，请先恢复映射，再重新启用。" }
+        resumeStartupDevices()
     }
     func applyWindows() {
         guard canApply, let identity = selectedDevice?.matchingIdentity else { return }
-        do { try transaction(journalURL(identity)).apply(device: identity, mappings: configuration.selectedMappings); activeDevices.insert(identity); mappingMessage = nil }
+        do {
+            try transaction(journalURL(identity)).apply(device: identity, mappings: configuration.selectedMappings)
+            activeDevices.insert(identity)
+            var enabled = configuration.enabledDevices ?? []
+            if !enabled.contains(identity) { enabled.append(identity) }
+            configuration.enabledDevices = enabled
+            save(); mappingMessage = nil
+        }
         catch { mappingMessage = "无法启用映射：\(error.localizedDescription)" }
     }
     func verifyCurrentMapping() {
@@ -157,7 +177,10 @@ import ServiceManagement
         do {
             let old = try FileMappingJournalStore(url: legacyJournal).load()
             let url = old?.device == identity ? legacyJournal : journalURL(identity)
-            try transaction(url).restore(); activeDevices.remove(identity); mappingMessage = nil
+            try transaction(url).restore(); activeDevices.remove(identity)
+            pendingStartupDevices.remove(identity)
+            configuration.enabledDevices?.removeAll { $0 == identity }
+            save(); mappingMessage = nil
         }
         catch { activeDevices.remove(identity); mappingMessage = "无法恢复映射：\(error.localizedDescription)" }
     }
@@ -172,7 +195,30 @@ import ServiceManagement
             else { mappingMessage = nil }
         } catch { mappingMessage = "无法检查恢复记录：\(error.localizedDescription)" }
     }
-    func recoverOnStart() { if hasRecovery { restoreAllMappings(); if !hasRecovery { mappingMessage = "已恢复上次运行前的键盘映射。" } } }
+    func recoverOnStart() {
+        if hasRecovery { restoreAllMappings() }
+        guard configurationWritable else { return }
+        pendingStartupDevices = Set(configuration.enabledDevices ?? [])
+        resumeStartupDevices()
+    }
+    private func resumeStartupDevices() {
+        for identity in pendingStartupDevices {
+            guard identity.isCompatibleGroup(in: devices) else { continue }
+            pendingStartupDevices.remove(identity)
+            let mappings = configuration.rules(for: identity).filter(\.enabled).map { KeyMapping(source: $0.source, destination: $0.destination) }
+            guard !mappings.isEmpty else { continue }
+            do {
+                if let legacy = try FileMappingJournalStore(url: legacyJournal).load(), legacy.device == identity {
+                    try transaction(legacyJournal).restore()
+                }
+                let url = journalURL(identity)
+                try transaction(url).restore()
+                try transaction(url).apply(device: identity, mappings: mappings)
+                activeDevices.insert(identity)
+            }
+            catch { mappingMessage = "无法自动启用键盘映射：\(error.localizedDescription)" }
+        }
+    }
     func setRules(_ rules: [KeyRule]) {
         guard configurationWritable, let identity = selectedDevice?.matchingIdentity else { mappingMessage = "请先选择键盘。"; return }
         guard !selectedHasRecovery || mappingActive else { mappingMessage = "请先恢复当前键盘的映射。"; return }
@@ -188,6 +234,7 @@ import ServiceManagement
             } catch { activeDevices.remove(identity); mappingMessage = "无法更新映射：\(error.localizedDescription)"; return }
         }
         configuration.setRules(rules, for: identity)
+        if newMappings.isEmpty { configuration.enabledDevices?.removeAll { $0 == identity }; pendingStartupDevices.remove(identity) }
         mappingMessage = nil
         save()
     }

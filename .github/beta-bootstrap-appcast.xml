@@ -1,0 +1,14 @@
+<?xml version="1.0" standalone="yes"?>
+<rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0">
+    <channel>
+        <title>Winlay</title>
+        <item>
+            <title>1.2</title>
+            <pubDate>Wed, 11 Nov 2026 13:08:30 +0800</pubDate>
+            <sparkle:version>12</sparkle:version>
+            <sparkle:shortVersionString>1.2</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <enclosure url="https://github.com/Songh0918/Winlay/releases/download/v12-beta1/Winlay-v12-beta1.zip" length="3157390" type="application/octet-stream" sparkle:edSignature="/aX22QbdKsfDvmYPdcX3AYcvxo1qHyEol2cPCdRhaz/Idp6UAmy3b2z6bSd75yIgL8nivzjpsSu5WxosbbLtBg=="/>
+        </item>
+    </channel>
+</rss>

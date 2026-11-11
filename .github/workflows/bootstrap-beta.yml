@@ -1,0 +1,40 @@
+name: Publish initial signed beta
+
+on:
+  push:
+    branches: [winlay-beta-bootstrap]
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    if: github.repository == 'Songh0918/Winlay'
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      BLOB_SHA: e4fe95b243283a91de4b365832874259790c065c
+      ARCHIVE_SHA: 1be2f9f51929a1558920e34e06410a9ef14eecb52f73e8ae540f3c271fb9da79
+      RELEASE_TAG: v12-beta1
+    steps:
+      - uses: actions/checkout@v4
+      - name: Retrieve and verify locally signed beta
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/beta"
+          gh api "repos/$GITHUB_REPOSITORY/git/blobs/$BLOB_SHA" --jq .content | base64 --decode > "$RUNNER_TEMP/beta/Winlay-v12-beta1.zip"
+          printf '%s  %s\n' "$ARCHIVE_SHA" "$RUNNER_TEMP/beta/Winlay-v12-beta1.zip" | sha256sum -c
+          (cd "$RUNNER_TEMP/beta" && sha256sum Winlay-v12-beta1.zip > SHA256SUMS)
+      - name: Publish prerelease and update beta feed
+        run: |
+          set -euo pipefail
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            echo 'Release already exists; refusing to replace it.' >&2; exit 1
+          fi
+          gh release create "$RELEASE_TAG" "$RUNNER_TEMP/beta/Winlay-v12-beta1.zip" "$RUNNER_TEMP/beta/SHA256SUMS" --target "$GITHUB_SHA" --prerelease --title 'Winlay v12-beta1' --notes '测试应用内更新、菜单栏入口及键盘映射恢复。'
+          if gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/winlay-updates-beta" >/dev/null 2>&1; then
+            echo 'Beta feed branch already exists; refusing to overwrite it.' >&2; exit 1
+          fi
+          gh api --method POST "repos/$GITHUB_REPOSITORY/git/refs" -f ref=refs/heads/winlay-updates-beta -f sha="$GITHUB_SHA" >/dev/null
+          python3 -c 'import base64,json; print(json.dumps({"message":"Publish initial beta appcast", "branch":"winlay-updates-beta", "content":base64.b64encode(open(".github/beta-bootstrap-appcast.xml","rb").read()).decode()}))' > "$RUNNER_TEMP/feed-request.json"
+          gh api --method PUT "repos/$GITHUB_REPOSITORY/contents/appcast.xml" --input "$RUNNER_TEMP/feed-request.json" >/dev/null

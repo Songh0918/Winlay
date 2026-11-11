@@ -102,12 +102,14 @@ public struct Configuration: Codable, Equatable {
     public var deviceRefreshInterval: Double? = nil
     public var showDockIcon: Bool? = nil
     public var showMenuBarIcon: Bool? = nil
+    // Devices explicitly enabled by the user, retained across normal app restarts.
+    public var enabledDevices: [DeviceIdentity]? = nil
     public var effectiveDeviceRefreshInterval: Double {
         guard let interval = deviceRefreshInterval, interval.isFinite, (0.5...30).contains(interval) else { return 2 }
         return interval
     }
     public var effectiveShowDockIcon: Bool { showDockIcon ?? false }
-    public var effectiveShowMenuBarIcon: Bool { showMenuBarIcon ?? true }
+    public var effectiveShowMenuBarIcon: Bool { (showMenuBarIcon ?? true) || !effectiveShowDockIcon }
     public func rules(for device: DeviceIdentity) -> [KeyRule] {
         if let profile = profiles?.first(where: { $0.device == device }) { return profile.rules }
         let enabled = (profiles == nil && selectedDevice == device) ? enabledMappingSources : nil

@@ -37,6 +37,7 @@ final class CoreTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: directory) }
         let store = ConfigurationStore(url: directory.appendingPathComponent("configuration.json"))
         var value = Configuration(); value.preferredMode = .windows; value.selectedDevice = DeviceIdentity(vendorID: 1, productID: 2, locationID: 3)
+        value.enabledDevices = [value.selectedDevice!]
         try store.save(value)
         XCTAssertEqual(try store.load(), value)
         try Data("{\"schemaVersion\":999}".utf8).write(to: store.url)
@@ -75,7 +76,7 @@ final class CoreTests: XCTestCase {
         config.deviceRefreshInterval = 0.5
         XCTAssertEqual(config.effectiveDeviceRefreshInterval, 0.5)
         config.showMenuBarIcon = false
-        XCTAssertFalse(config.effectiveShowMenuBarIcon)
+        XCTAssertTrue(config.effectiveShowMenuBarIcon)
         config.showDockIcon = true
         XCTAssertFalse(config.effectiveShowMenuBarIcon)
     }
