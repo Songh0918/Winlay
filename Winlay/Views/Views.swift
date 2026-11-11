@@ -1,6 +1,25 @@
 import SwiftUI
 import AppKit
+import Metal
 import Sparkle
+
+private enum GlassGraphics {
+    static let hasMetalDevice = MTLCreateSystemDefaultDevice() != nil
+}
+
+private struct GlassActions: ViewModifier {
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @ViewBuilder func body(content: Content) -> some View {
+        if #available(macOS 26.0, *), SystemAppearance.usesGlass(
+            majorVersion: ProcessInfo.processInfo.operatingSystemVersion.majorVersion,
+            hasMetalDevice: GlassGraphics.hasMetalDevice, reduceTransparency: reduceTransparency) {
+            content.buttonStyle(.bordered).padding(6)
+                .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 14))
+        } else {
+            content
+        }
+    }
+}
 
 final class UpdateAvailability: ObservableObject {
     @Published var canCheck = false
@@ -15,7 +34,7 @@ struct CheckForUpdatesButton: View {
         _availability = StateObject(wrappedValue: UpdateAvailability(updater: updater))
     }
     var body: some View {
-        Button("检查更新…") { updater.checkForUpdates() }.disabled(!availability.canCheck)
+        Button("检查更新…") { updater.checkForUpdates() }.disabled(!availability.canCheck).modifier(GlassActions())
     }
 }
 
@@ -108,7 +127,7 @@ struct SettingsView: View {
                 else { Button("启用 Mac 键位布局") { confirmingWindows = true }.disabled(!model.canApply) }
                 if model.mappingActive { Button("检查当前映射") { model.verifyCurrentMapping() } }
                 Button("重新检测") { model.refresh() }
-            }
+            }.modifier(GlassActions())
         }
     }
     private var keys: some View {
@@ -211,7 +230,7 @@ struct SettingsView: View {
                 Button("开启") { model.setLogin(enabled: true) }.disabled(model.loginStatus == "已开启")
                 Button("关闭") { model.setLogin(enabled: false) }.disabled(model.loginStatus == "未开启")
                 Button("重新检测") { model.updateLoginStatus() }
-            }
+            }.modifier(GlassActions())
             Divider()
             Text("软件更新").font(.headline)
             CheckForUpdatesButton(updater: appDelegate.updaterController.updater)

@@ -1,5 +1,11 @@
 import Foundation
 
+enum SystemAppearance {
+    static func usesGlass(majorVersion: Int, hasMetalDevice: Bool = true, reduceTransparency: Bool = false) -> Bool {
+        (26...27).contains(majorVersion) && hasMetalDevice && !reduceTransparency
+    }
+}
+
 public enum KeyboardMode: String, Codable, CaseIterable, Identifiable {
     case windows, mac, unchanged
     public var id: String { rawValue }

@@ -12,8 +12,9 @@ import ServiceManagement
     @Published var showingOnboarding = false
     @Published private(set) var activeDevices: Set<DeviceIdentity> = []
     @Published var mappingMessage: String?
-    private let deviceManager = KeyboardDeviceManager()
-    private let backend = HIDMappingBackend()
+    private let deviceManager: KeyboardDeviceManager
+    private let deviceProvider: () -> [KeyboardDevice]
+    private let backend: any DeviceMappingBackend
     private let root: URL
     private let store: ConfigurationStore
     private var timer: Timer?
@@ -22,15 +23,22 @@ import ServiceManagement
     private var disconnectedDevices: Set<DeviceIdentity> = []
     private var pendingStartupDevices: Set<DeviceIdentity> = []
 
-    init() {
-        root = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("Winlay")
-        store = ConfigurationStore(url: root.appendingPathComponent("configuration.json"))
+    init(root: URL? = nil, deviceProvider: (() -> [KeyboardDevice])? = nil,
+         backend: any DeviceMappingBackend = HIDMappingBackend(), observeSystemEvents: Bool = true) {
+        let manager = KeyboardDeviceManager()
+        deviceManager = manager
+        self.deviceProvider = deviceProvider ?? { manager.devices() }
+        self.backend = backend
+        self.root = root ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("Winlay")
+        store = ConfigurationStore(url: self.root.appendingPathComponent("configuration.json"))
         do { configuration = try store.load() } catch { errorMessage = "配置读取失败，已停止覆盖原文件：\(error.localizedDescription)"; configurationWritable = false }
         showingOnboarding = !configuration.onboardingComplete
-        refresh()
+        if observeSystemEvents { refresh() } else { refreshDevices() }
         recoverOnStart()
-        scheduleDeviceRefresh()
-        wakeObserver = NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in Task { @MainActor in self?.refresh() } }
+        if observeSystemEvents {
+            scheduleDeviceRefresh()
+            wakeObserver = NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in Task { @MainActor in self?.refreshAfterWake() } }
+        }
     }
     private func scheduleDeviceRefresh() {
         timer?.invalidate()
@@ -135,7 +143,7 @@ import ServiceManagement
     }
     var canApply: Bool { guard configurationWritable, !configuration.selectedMappings.isEmpty, !mappingActive, !selectedHasRecovery, let device = selectedDevice, let identity = device.matchingIdentity else { return false }; return identity.isCompatibleGroup(in: devices) }
     func refreshDevices() {
-        let current = deviceManager.devices()
+        let current = deviceProvider()
         if current != devices { devices = current }
         let missing = activeDevices.filter { identity in !current.contains { $0.matchingIdentity == identity } }
         if !missing.isEmpty { activeDevices.subtract(missing); disconnectedDevices.formUnion(missing); mappingMessage = "键盘已断开；恢复记录已保留，请重新连接后恢复。" }
@@ -187,13 +195,32 @@ import ServiceManagement
     func restoreAllMappings() {
         do {
             var failures: [String] = []
+            var offline = 0
             for url in try journalURLs() {
-                do { try transaction(url).restore() } catch { failures.append(error.localizedDescription) }
+                do {
+                    guard let saved = try FileMappingJournalStore(url: url).load() else { continue }
+                    guard devices.contains(where: { $0.matchingIdentity == saved.device }) else { offline += 1; continue }
+                    do { try transaction(url).restore(); activeDevices.remove(saved.device) }
+                    catch { activeDevices.remove(saved.device); throw error }
+                } catch { failures.append(error.localizedDescription) }
             }
-            activeDevices.removeAll()
             if !failures.isEmpty { mappingMessage = "部分设备无法恢复：\(failures.joined(separator: "；"))" }
+            else if offline > 0 { mappingMessage = "有 \(offline) 条旧设备恢复记录：设备未连接，记录已保留；不会修改其他设备的映射。" }
             else { mappingMessage = nil }
         } catch { mappingMessage = "无法检查恢复记录：\(error.localizedDescription)" }
+    }
+    func refreshAfterWake() {
+        refresh()
+        var needsAttention = false
+        for identity in activeDevices {
+            do {
+                guard let saved = try FileMappingJournalStore(url: journalURL(identity)).load(),
+                      saved.matchesApplied(states: try backend.readStates(device: identity)) else {
+                    activeDevices.remove(identity); needsAttention = true; continue
+                }
+            } catch { activeDevices.remove(identity); needsAttention = true }
+        }
+        if needsAttention { mappingMessage = "唤醒后部分键盘映射发生变化或暂时无法读取；恢复记录已保留，请检查后恢复并重新启用。" }
     }
     func recoverOnStart() {
         if hasRecovery { restoreAllMappings() }

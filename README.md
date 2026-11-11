@@ -32,6 +32,7 @@ shasum -a 256 -c SHA256SUMS
 - **默认布局**：左右 Alt 映射为 Command，左右 Win 映射为 Option；Ctrl 保持 Control。默认布局下，可用 Alt+C、Alt+V 等执行对应的 Mac 快捷键。
 - **恢复机制**：写入映射前保存恢复记录；暂停、正常退出或下次启动时尝试恢复原有映射。检测到不安全的冲突时不会强行覆盖。
 - **状态检查**：查看键盘及连接状态，手动检查系统中的映射；设备重连后提示恢复。
+- **外观**：macOS 26 和 27 在部分操作区域使用系统玻璃效果；开启降低透明度或没有可用 Metal 设备时回退到普通样式。侧边栏和工具栏遵循系统外观。
 - **通用设置**：调整设备列表刷新间隔，控制程序坞及菜单栏图标，设置登录时启动。至少保留一个图标以便重新打开设置。用户启用过的键盘在下次启动时，若原连接位置可用且映射检查通过，将尝试重新应用；登录项是否可用受系统和应用签名方式影响。
 - **检查更新**：测试版使用 Sparkle 检查测试通道，新版下载后由用户确认安装并重启。更新包使用 Ed25519 签名校验。中文系统下更新提示显示简体中文。
 
@@ -41,7 +42,7 @@ shasum -a 256 -c SHA256SUMS
 - 设备必须提供完整且可区分的厂商、产品和位置标识；2.4 GHz 接收器可能显示为 USB，鼠标也可能暴露键盘接口。更换 USB 接口后，可能需要重新选择设备。
 - 多接口设备、蓝牙、USB、2.4 GHz、内置键盘以及休眠唤醒的行为可能因设备和系统而异，尚未全面验证。
 - 设备列表刷新间隔只影响连接状态的刷新，不改变每次按键或快捷键的响应速度。
-- 断线后保留恢复记录；重新连接后请先恢复，再重新启用。若映射已被其他程序更改，Winlay 会停止自动覆盖。
+- 断线后保留恢复记录；重新连接后请先恢复，再重新启用。唤醒后会只读检查已启用键盘的映射；如果系统映射发生变化或无法读取，应用不再显示其为已启用。若映射已被其他程序更改，Winlay 会停止自动覆盖。
 - 单键映射使用 macOS 的 HID 服务；Winlay 不监听、记录或上传按键内容。配置及恢复记录保存在本机 `~/Library/Application Support/Winlay/`。
 
 ## 从源码构建
@@ -58,13 +59,15 @@ bash scripts/build-app.sh
 
 也可以使用 Xcode 打开 `Winlay.xcodeproj` 并选择 Winlay scheme。核心模型测试使用 `swift test`；运行测试需要可用的 XCTest 环境，部分仅安装 Command Line Tools 的环境可能缺少 XCTest。
 
+在仅安装 Command Line Tools 的环境中，也可以运行 `bash scripts/test-recovery.sh` 和 `bash scripts/tests/test-publish-beta.sh`；前者使用模拟设备，后者模拟 GitHub 和签名工具，不会修改真实键盘或发布版本。
+
 ## 更新记录与反馈
 
 各开发版本的变更见 [CHANGELOG.md](CHANGELOG.md)。遇到问题或提出建议，请通过 [GitHub Issues](https://github.com/Songh0918/Winlay/issues) 反馈，并注明系统版本、键盘型号、连接方式和复现步骤；请勿提交密码或其他敏感信息。
 
 发布新版本时，先更新 `CHANGELOG.md` 中对应的版本说明并提交源码。然后推送形如 `v11` 的 Git 标签，或在 GitHub Actions 中手动运行 “Build and publish release” 并填写版本标签；工作流会构建通用版并将 ZIP 与校验文件作为 Release 附件上传。
 
-测试更新单独使用 `winlay-updates-beta` 分支的清单和 GitHub 预发布版。发布者在保存签名私钥的 Mac 上安装并登录 GitHub CLI，将源码提交、推送后运行 `bash scripts/publish-beta.sh v15-beta1 1.5 15`；构建号必须大于已发布版本。脚本在本机用钥匙串签名，只上传签名后的安装包和清单，私钥不会发送到 GitHub。私钥必须安全备份，不能提交到仓库；目前的临时签名也不能替代 Developer ID 签名和公证。
+测试更新单独使用 `winlay-updates-beta` 分支的清单和 GitHub 预发布版。发布者在保存签名私钥的 Mac 上安装并登录 GitHub CLI，将源码提交、推送后运行 `bash scripts/publish-beta.sh v15-beta1 1.5 15`；构建号必须大于已发布版本。脚本在本机用钥匙串签名并验证安装包，只上传签名后的安装包和清单，私钥不会发送到 GitHub。如果并发发布导致清单冲突，不会覆盖其他版本；已发布的 Release 附件中保留了清单供恢复。私钥必须安全备份，不能提交到仓库；目前的临时签名也不能替代 Developer ID 签名和公证。
 
 ## 许可证
 
