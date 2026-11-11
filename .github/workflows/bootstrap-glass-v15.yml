@@ -1,0 +1,24 @@
+name: Publish verified glass beta
+on:
+  push:
+    branches: [winlay-beta-glass-v15]
+permissions:
+  contents: write
+jobs:
+  publish:
+    if: github.repository == 'Songh0918/Winlay'
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify and publish signed beta
+        run: |
+          set -euo pipefail
+          gh api "repos/$GITHUB_REPOSITORY/git/blobs/0828e09e1bcb781c636863beea98c3f89939aac4" --jq .content | base64 --decode > "$RUNNER_TEMP/Winlay-v15-beta1.zip"
+          printf '%s  %s\n' d43da917ff3fac4b114715fa47f0411a463c220dfde14ccb0b02565241bd7b24 "$RUNNER_TEMP/Winlay-v15-beta1.zip" | sha256sum -c
+          if gh release view v15-beta1 >/dev/null 2>&1; then echo 'Release exists' >&2; exit 1; fi
+          (cd "$RUNNER_TEMP" && sha256sum Winlay-v15-beta1.zip > SHA256SUMS)
+          gh release create v15-beta1 "$RUNNER_TEMP/Winlay-v15-beta1.zip" "$RUNNER_TEMP/SHA256SUMS" .github/beta-glass-appcast.xml --target "$GITHUB_SHA" --prerelease --title 'Winlay v15-beta1' --notes '测试 macOS 26、27 的玻璃效果与键盘恢复。'
+          python3 -c 'import base64,json; print(json.dumps({"message":"Publish glass beta","branch":"winlay-updates-beta","sha":"c343f5ea585cd42e547ba4f5bd5cf4e0475c04fd","content":base64.b64encode(open(".github/beta-glass-appcast.xml","rb").read()).decode()}))' > "$RUNNER_TEMP/feed-request.json"
+          gh api --method PUT "repos/$GITHUB_REPOSITORY/contents/appcast.xml" --input "$RUNNER_TEMP/feed-request.json" >/dev/null
