@@ -1,10 +1,48 @@
 import SwiftUI
 import AppKit
+import Metal
+import Sparkle
+
+private enum GlassGraphics {
+    static let hasMetalDevice = MTLCreateSystemDefaultDevice() != nil
+}
+
+private struct GlassActions: ViewModifier {
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @ViewBuilder func body(content: Content) -> some View {
+        if #available(macOS 26.0, *), SystemAppearance.usesGlass(
+            majorVersion: ProcessInfo.processInfo.operatingSystemVersion.majorVersion,
+            hasMetalDevice: GlassGraphics.hasMetalDevice, reduceTransparency: reduceTransparency) {
+            content.buttonStyle(.bordered).padding(6)
+                .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 14))
+        } else {
+            content
+        }
+    }
+}
+
+final class UpdateAvailability: ObservableObject {
+    @Published var canCheck = false
+    init(updater: SPUUpdater) { updater.publisher(for: \.canCheckForUpdates).assign(to: &$canCheck) }
+}
+
+struct CheckForUpdatesButton: View {
+    private let updater: SPUUpdater
+    @StateObject private var availability: UpdateAvailability
+    init(updater: SPUUpdater) {
+        self.updater = updater
+        _availability = StateObject(wrappedValue: UpdateAvailability(updater: updater))
+    }
+    var body: some View {
+        Button("检查更新…") { updater.checkForUpdates() }.disabled(!availability.canCheck).modifier(GlassActions())
+    }
+}
 
 struct MenuPanel: View {
     @EnvironmentObject private var model: AppModel
     @Environment(\.openWindow) private var openWindow
     @State private var confirmingWindows = false
+    let appDelegate: AppDelegate
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack { Text("Winlay").font(.headline); Spacer(); Text(model.status).foregroundStyle(.secondary) }
@@ -17,7 +55,8 @@ struct MenuPanel: View {
             Text(model.mappingReason).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             Divider()
             Button("打开设置…") { openWindow(id: "settings"); NSApp.activate(ignoringOtherApps: true) }
-            Button("退出 Winlay") { model.restoreAllMappings(); if !model.hasRecovery { NSApp.terminate(nil) } }
+            CheckForUpdatesButton(updater: appDelegate.updaterController.updater)
+            Button("退出 Winlay") { NSApp.terminate(nil) }
         }.padding(16).frame(width: 340, alignment: .leading)
         .alert("启用 Mac 键位布局？", isPresented: $confirmingWindows) {
             Button("取消", role: .cancel) {}
@@ -88,7 +127,7 @@ struct SettingsView: View {
                 else { Button("启用 Mac 键位布局") { confirmingWindows = true }.disabled(!model.canApply) }
                 if model.mappingActive { Button("检查当前映射") { model.verifyCurrentMapping() } }
                 Button("重新检测") { model.refresh() }
-            }
+            }.modifier(GlassActions())
         }
     }
     private var keys: some View {
@@ -173,7 +212,7 @@ struct SettingsView: View {
             Text("通用").font(.headline)
             Toggle("在程序坞显示图标", isOn: Binding(get: { model.configuration.effectiveShowDockIcon }, set: { model.setDockIconVisible($0) }))
             Toggle("在菜单栏显示图标", isOn: Binding(get: { model.configuration.effectiveShowMenuBarIcon }, set: { model.setMenuBarIconVisible($0) }))
-            Text("两个图标都可隐藏，映射仍在后台工作。重新打开设置：按 ⌘ 空格搜索 Winlay 并打开，或在“应用程序”中再次打开。")
+            Text("请至少保留一个图标，以便随时打开设置。登录时启动需要在下方开启；启用过的键盘在原连接位置可用时会尝试重新应用映射。")
                 .font(.caption).foregroundStyle(.secondary)
             Divider()
             Text("设备检测").font(.headline)
@@ -191,7 +230,12 @@ struct SettingsView: View {
                 Button("开启") { model.setLogin(enabled: true) }.disabled(model.loginStatus == "已开启")
                 Button("关闭") { model.setLogin(enabled: false) }.disabled(model.loginStatus == "未开启")
                 Button("重新检测") { model.updateLoginStatus() }
-            }
+            }.modifier(GlassActions())
+            Divider()
+            Text("软件更新").font(.headline)
+            CheckForUpdatesButton(updater: appDelegate.updaterController.updater)
+            Text("自动检查更新；安装前需要确认并重启 Winlay。")
+                .font(.caption).foregroundStyle(.secondary)
             Divider()
             Text("权限").font(.headline)
             Text("单键映射通过系统 HID 服务设置；当前版本不监听或记录按键内容。")

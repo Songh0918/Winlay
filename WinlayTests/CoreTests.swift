@@ -2,6 +2,15 @@ import XCTest
 @testable import WinlayCore
 
 final class CoreTests: XCTestCase {
+    func testGlassIsLimitedToMacOS26And27() {
+        XCTAssertFalse(SystemAppearance.usesGlass(majorVersion: 15))
+        XCTAssertFalse(SystemAppearance.usesGlass(majorVersion: 25))
+        XCTAssertTrue(SystemAppearance.usesGlass(majorVersion: 26))
+        XCTAssertTrue(SystemAppearance.usesGlass(majorVersion: 27))
+        XCTAssertFalse(SystemAppearance.usesGlass(majorVersion: 28))
+        XCTAssertFalse(SystemAppearance.usesGlass(majorVersion: 26, hasMetalDevice: false))
+        XCTAssertFalse(SystemAppearance.usesGlass(majorVersion: 26, reduceTransparency: true))
+    }
     func testMacPositionMappingsSwapAltAndWinOnBothSides() {
         XCTAssertEqual(KeyboardMode.windows.mappings, [KeyMapping(source: 0xe2, destination: 0xe3), KeyMapping(source: 0xe3, destination: 0xe2), KeyMapping(source: 0xe6, destination: 0xe7), KeyMapping(source: 0xe7, destination: 0xe6)])
         XCTAssertTrue(KeyboardMode.unchanged.mappings.isEmpty)
@@ -37,6 +46,7 @@ final class CoreTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: directory) }
         let store = ConfigurationStore(url: directory.appendingPathComponent("configuration.json"))
         var value = Configuration(); value.preferredMode = .windows; value.selectedDevice = DeviceIdentity(vendorID: 1, productID: 2, locationID: 3)
+        value.enabledDevices = [value.selectedDevice!]
         try store.save(value)
         XCTAssertEqual(try store.load(), value)
         try Data("{\"schemaVersion\":999}".utf8).write(to: store.url)
@@ -75,7 +85,7 @@ final class CoreTests: XCTestCase {
         config.deviceRefreshInterval = 0.5
         XCTAssertEqual(config.effectiveDeviceRefreshInterval, 0.5)
         config.showMenuBarIcon = false
-        XCTAssertFalse(config.effectiveShowMenuBarIcon)
+        XCTAssertTrue(config.effectiveShowMenuBarIcon)
         config.showDockIcon = true
         XCTAssertFalse(config.effectiveShowMenuBarIcon)
     }
