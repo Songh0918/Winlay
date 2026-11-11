@@ -1,0 +1,87 @@
+name: Publish Winlay beta update
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Unique prerelease tag, e.g. v12-beta1'
+        required: true
+        type: string
+      version:
+        description: 'Display version, e.g. 1.2'
+        required: true
+        type: string
+      build:
+        description: 'Increasing numeric build number, e.g. 12'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: winlay-beta-feed
+  cancel-in-progress: false
+
+jobs:
+  beta:
+    runs-on: macos-15
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_TAG: ${{ inputs.tag }}
+      WINLAY_VERSION: ${{ inputs.version }}
+      WINLAY_BUILD_NUMBER: ${{ inputs.build }}
+      FEED_BRANCH: winlay-updates-beta
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate release parameters
+        env:
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+([.][0-9]+)*-beta[0-9]+$ ]]
+          [[ "$WINLAY_VERSION" =~ ^[0-9]+([.][0-9]+){0,2}$ ]]
+          [[ "$WINLAY_BUILD_NUMBER" =~ ^[0-9]+$ ]]
+          (( 10#$WINLAY_BUILD_NUMBER > 14 )) || { echo 'Build must be greater than the installed beta build 14.' >&2; exit 1; }
+          [[ -n "$SPARKLE_PRIVATE_KEY" ]] || { echo 'Missing SPARKLE_PRIVATE_KEY Actions secret.' >&2; exit 1; }
+          printf '%s' "$SPARKLE_PRIVATE_KEY" | swift scripts/check-sparkle-key.swift Winlay/Info.plist
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            echo 'Release already exists; refusing to replace it.' >&2
+            exit 1
+          fi
+      - name: Download verified Sparkle
+        run: |
+          set -euo pipefail
+          curl -fsSL --retry 3 https://github.com/sparkle-project/Sparkle/releases/download/2.10.1/Sparkle-2.10.1.tar.xz -o "$RUNNER_TEMP/sparkle.tar.xz"
+          printf '%s  %s\n' 1a856d2a9edb8e628de88121d7be04cf0e2167f8641650b78fca00b14244cf27 "$RUNNER_TEMP/sparkle.tar.xz" | shasum -a 256 -c
+          mkdir -p "$RUNNER_TEMP/sparkle"
+          tar -xJf "$RUNNER_TEMP/sparkle.tar.xz" -C "$RUNNER_TEMP/sparkle"
+      - name: Build and sign the beta update
+        env:
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          WINLAY_SKIP_DMG=1 WINLAY_SPARKLE_DIR="$RUNNER_TEMP/sparkle" bash scripts/build-app.sh "$RUNNER_TEMP/build"
+          mkdir -p "$RUNNER_TEMP/feed"
+          ditto "$RUNNER_TEMP/build/Winlay-macos-universal.zip" "$RUNNER_TEMP/feed/Winlay-$RELEASE_TAG.zip"
+          if gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/$FEED_BRANCH" >/dev/null 2>&1; then
+            gh api "repos/$GITHUB_REPOSITORY/contents/appcast.xml?ref=$FEED_BRANCH" --jq .content > "$RUNNER_TEMP/feed-base64"
+            base64 --decode < "$RUNNER_TEMP/feed-base64" > "$RUNNER_TEMP/feed/appcast.xml"
+            python3 -c 'import os,xml.etree.ElementTree as e; root=e.parse(os.environ["RUNNER_TEMP"] + "/feed/appcast.xml"); versions=[int(x.text) for x in root.findall(".//{http://www.andymatuschak.org/xml-namespaces/sparkle}version")]; assert not versions or int(os.environ["WINLAY_BUILD_NUMBER"]) > max(versions), "build number must increase"'
+          fi
+          printf '%s' "$SPARKLE_PRIVATE_KEY" | "$RUNNER_TEMP/sparkle/bin/generate_appcast" --ed-key-file - --maximum-deltas 0 --maximum-versions 0 --download-url-prefix "https://github.com/$GITHUB_REPOSITORY/releases/download/$RELEASE_TAG/" "$RUNNER_TEMP/feed"
+          (cd "$RUNNER_TEMP/feed" && shasum -a 256 "Winlay-$RELEASE_TAG.zip" > SHA256SUMS)
+      - name: Publish prerelease
+        run: |
+          set -euo pipefail
+          gh release create "$RELEASE_TAG" "$RUNNER_TEMP/feed/Winlay-$RELEASE_TAG.zip" "$RUNNER_TEMP/feed/SHA256SUMS" --target "$GITHUB_SHA" --prerelease --title "Winlay $RELEASE_TAG" --notes 'Winlay 测试更新。'
+      - name: Update beta feed after upload
+        run: |
+          set -euo pipefail
+          if ! gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/$FEED_BRANCH" >/dev/null 2>&1; then
+            gh api --method POST "repos/$GITHUB_REPOSITORY/git/refs" -f ref="refs/heads/$FEED_BRANCH" -f sha="$GITHUB_SHA" >/dev/null
+          fi
+          old_sha=$(gh api "repos/$GITHUB_REPOSITORY/contents/appcast.xml?ref=$FEED_BRANCH" --jq .sha 2>/dev/null || true)
+          export FEED_FILE="$RUNNER_TEMP/feed/appcast.xml" OLD_SHA="$old_sha"
+          python3 -c 'import base64,json,os; payload={"message":"Update beta appcast", "branch":os.environ["FEED_BRANCH"], "content":base64.b64encode(open(os.environ["FEED_FILE"],"rb").read()).decode()}; payload.update({"sha":os.environ["OLD_SHA"]} if os.environ["OLD_SHA"] else {}); print(json.dumps(payload))' > "$RUNNER_TEMP/feed-request.json"
+          gh api --method PUT "repos/$GITHUB_REPOSITORY/contents/appcast.xml" --input "$RUNNER_TEMP/feed-request.json" >/dev/null
