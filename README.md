@@ -64,7 +64,7 @@ bash scripts/build-app.sh
 
 发布新版本时，先更新 `CHANGELOG.md` 中对应的版本说明并提交源码。然后推送形如 `v11` 的 Git 标签，或在 GitHub Actions 中手动运行 “Build and publish release” 并填写版本标签；工作流会构建通用版并将 ZIP 与校验文件作为 Release 附件上传。
 
-测试更新单独使用 `winlay-updates-beta` 分支的清单和 GitHub 预发布版。将 `beta-update.yml` 合入默认分支并在仓库 Actions secrets 中安全配置与 `SUPublicEDKey` 匹配的 `SPARKLE_PRIVATE_KEY` 后，可手动运行 “Publish Winlay beta update”，填写唯一的 `v数字-beta数字` 标签、显示版本和大于已发布版本的构建号。私钥必须安全备份，不能提交到仓库；目前的临时签名也不能替代 Developer ID 签名和公证。
+测试更新单独使用 `winlay-updates-beta` 分支的清单和 GitHub 预发布版。发布者在保存签名私钥的 Mac 上安装并登录 GitHub CLI，将源码提交、推送后运行 `bash scripts/publish-beta.sh v15-beta1 1.5 15`；构建号必须大于已发布版本。脚本在本机用钥匙串签名，只上传签名后的安装包和清单，私钥不会发送到 GitHub。私钥必须安全备份，不能提交到仓库；目前的临时签名也不能替代 Developer ID 签名和公证。
 
 ## 许可证
 
