@@ -1,0 +1,24 @@
+name: Verify Chinese update prompt
+on:
+  push:
+    branches: [winlay-beta-zh-verify]
+permissions:
+  contents: write
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify and publish beta
+        run: |
+          set -euo pipefail
+          gh api "repos/$GITHUB_REPOSITORY/git/blobs/a8166a98122b056f4fbd08f94c76c7cb1c7fd984" --jq .content | base64 --decode > "$RUNNER_TEMP/Winlay-v14-beta1.zip"
+          printf '%s  %s\n' d4018f7523b55556d9c57463dbc65f9f1a62ed9087644ac2d2a09970beb719f3 "$RUNNER_TEMP/Winlay-v14-beta1.zip" | sha256sum -c
+          if gh release view v14-beta1 >/dev/null 2>&1; then echo 'Release exists' >&2; exit 1; fi
+          gh release create v14-beta1 "$RUNNER_TEMP/Winlay-v14-beta1.zip" --target "$GITHUB_SHA" --prerelease --title 'Winlay v14-beta1' --notes '验证中文更新提示和更新后恢复。'
+          old_sha=$(gh api "repos/$GITHUB_REPOSITORY/contents/appcast.xml?ref=winlay-updates-beta" --jq .sha)
+          export OLD_SHA="$old_sha"
+          python3 -c 'import base64,json,os; print(json.dumps({"message":"Publish Chinese prompt verification beta","branch":"winlay-updates-beta","sha":os.environ["OLD_SHA"],"content":base64.b64encode(open(".github/beta-verify-appcast.xml","rb").read()).decode()}))' > "$RUNNER_TEMP/request.json"
+          gh api --method PUT "repos/$GITHUB_REPOSITORY/contents/appcast.xml" --input "$RUNNER_TEMP/request.json" >/dev/null
