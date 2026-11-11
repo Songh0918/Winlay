@@ -20,6 +20,9 @@ gh api "repos/$REPO/git/commits/$COMMIT" >/dev/null || { echo '当前提交尚�
 if gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
   echo '该测试版已存在，不会覆盖。' >&2; exit 1
 fi
+if gh api "repos/$REPO/git/ref/tags/$TAG" >/dev/null 2>&1; then
+  echo '该标签已存在，不会复用已有标签。' >&2; exit 1
+fi
 
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/winlay-beta.XXXXXX")"
 trap 'rm -rf "$WORK"' EXIT
@@ -43,13 +46,13 @@ WINLAY_SKIP_DMG=1 WINLAY_SPARKLE_DIR="$SPARKLE_DIR" WINLAY_VERSION="$VERSION" WI
 cp "$WORK/build/Winlay-macos-universal.zip" "$WORK/feed/Winlay-$TAG.zip"
 "$SPARKLE_DIR/bin/generate_appcast" --account com.songh.winlay --maximum-deltas 0 --maximum-versions 0 --download-url-prefix "https://github.com/$REPO/releases/download/$TAG/" "$WORK/feed"
 (cd "$WORK/feed" && shasum -a 256 "Winlay-$TAG.zip" > SHA256SUMS)
-gh release create "$TAG" "$WORK/feed/Winlay-$TAG.zip" "$WORK/feed/SHA256SUMS" --repo "$REPO" --target "$COMMIT" --prerelease --title "Winlay $TAG" --notes 'Winlay 测试更新。'
+gh release create "$TAG" "$WORK/feed/Winlay-$TAG.zip" "$WORK/feed/SHA256SUMS" "$WORK/feed/appcast.xml" --repo "$REPO" --target "$COMMIT" --prerelease --title "Winlay $TAG" --notes 'Winlay 测试更新。'
 
 OLD_SHA="$(gh api "repos/$REPO/contents/appcast.xml?ref=$FEED_BRANCH" --jq .sha)"
 export OLD_SHA WINLAY_FEED_FILE
 python3 -c 'import base64,json,os; print(json.dumps({"message":"Update beta appcast", "branch":"winlay-updates-beta", "sha":os.environ["OLD_SHA"], "content":base64.b64encode(open(os.environ["WINLAY_FEED_FILE"],"rb").read()).decode()}))' > "$WORK/feed-request.json"
 if ! gh api --method PUT "repos/$REPO/contents/appcast.xml" --input "$WORK/feed-request.json" >/dev/null; then
-  echo '测试版已发布，但更新清单未更新；请保留版本并检查 GitHub 后再处理。' >&2
+  echo '测试版已发布，但更新清单未更新；发布附件中保留了可用于恢复的 appcast.xml。' >&2
   exit 1
 fi
 echo "已发布测试更新 $TAG；私钥保留在本机钥匙串。"
