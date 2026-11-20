@@ -7,6 +7,8 @@ struct HIDMappingError: LocalizedError {
 
 /// Operates on matching HID event services for one identified device.
 struct HIDMappingBackend: DeviceMappingBackend {
+    private static let headerRegex = try! NSRegularExpression(pattern: "(?m)^[ \\t]*([0-9a-fA-F]+)[ \\t]+(UserKeyMapping|HIDKeyboardModifierMappingPairs)[ \\t]+")
+    private static let entryRegex = try! NSRegularExpression(pattern: "\\{([^{}]*)\\}")
     private let srcKey = "HIDKeyboardModifierMappingSrc"
     private let dstKey = "HIDKeyboardModifierMappingDst"
     private func invoke(_ arguments: [String]) throws -> String {
@@ -14,8 +16,15 @@ struct HIDMappingBackend: DeviceMappingBackend {
         process.executableURL = URL(fileURLWithPath: "/usr/bin/hidutil")
         process.arguments = arguments; process.standardOutput = output; process.standardError = errors
         try process.run()
+        var errorData = Data()
+        let group = DispatchGroup()
+        group.enter()
+        DispatchQueue.global(qos: .userInitiated).async {
+            errorData = errors.fileHandleForReading.readDataToEndOfFile()
+            group.leave()
+        }
         let data = output.fileHandleForReading.readDataToEndOfFile()
-        let errorData = errors.fileHandleForReading.readDataToEndOfFile()
+        group.wait()
         process.waitUntilExit()
         guard process.terminationStatus == 0 else { throw HIDMappingError(message: "hidutil 执行失败：\(String(decoding: errorData, as: UTF8.self))") }
         return String(decoding: data, as: UTF8.self)
@@ -35,7 +44,7 @@ struct HIDMappingBackend: DeviceMappingBackend {
         guard !services.isEmpty, ids.count == services.count, Set(ids).count == ids.count,
               services.allSatisfy({ service in
                   guard let transport = service["Transport"] as? String else { return false }
-                  return (service["Built-In"] as? Bool) == true || ["usb", "bluetooth"].contains(transport.lowercased())
+                  return (service["Built-In"] as? Bool) == true || KeyboardDevice.isSupportedExternalTransport(transport)
               }) else {
             throw HIDMappingError(message: "无法确认匹配的键盘服务，已停止操作。")
         }
@@ -47,10 +56,17 @@ struct HIDMappingBackend: DeviceMappingBackend {
         return first
     }
     func readStates(device: DeviceIdentity) throws -> [[KeyMapping]] {
+        try readMappingProperty("UserKeyMapping", device: device)
+    }
+    func readSystemModifierMappings(device: DeviceIdentity) throws -> [[KeyMapping]] {
+        try readMappingProperty("HIDKeyboardModifierMappingPairs", device: device)
+    }
+    private func readMappingProperty(_ property: String, device: DeviceIdentity) throws -> [[KeyMapping]] {
         let (match, ids) = try checkedMatching(device)
-        let output = try invoke(["property", "--matching", match, "--get", "UserKeyMapping"])
+        let output = try invoke(["property", "--matching", match, "--get", property])
         let ns = output as NSString
-        let headers = try NSRegularExpression(pattern: "(?m)^[ \\t]*([0-9a-fA-F]+)[ \\t]+UserKeyMapping[ \\t]+").matches(in: output, range: NSRange(location: 0, length: ns.length))
+        let headers = Self.headerRegex.matches(in: output, range: NSRange(location: 0, length: ns.length))
+            .filter { ns.substring(with: $0.range(at: 2)) == property }
         var values: [UInt64: [KeyMapping]] = [:]
         for (index, header) in headers.enumerated() {
             guard let id = UInt64(ns.substring(with: header.range(at: 1)), radix: 16), ids.contains(id), values[id] == nil else { throw HIDMappingError(message: "设备映射服务标识异常。") }
@@ -64,11 +80,10 @@ struct HIDMappingBackend: DeviceMappingBackend {
     private func parseMapping(_ raw: String) throws -> [KeyMapping] {
         let value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         if value == "(null)" || value.replacingOccurrences(of: " ", with: "").replacingOccurrences(of: "\n", with: "") == "()" { return [] }
-        let regex = try NSRegularExpression(pattern: "\\{([^{}]*)\\}")
         let ns = value as NSString
-        let matches = regex.matches(in: value, range: NSRange(location: 0, length: ns.length))
+        let matches = Self.entryRegex.matches(in: value, range: NSRange(location: 0, length: ns.length))
         guard !matches.isEmpty else { throw HIDMappingError(message: "无法解析已有映射，拒绝修改。") }
-        let remaining = regex.stringByReplacingMatches(in: value, range: NSRange(location: 0, length: ns.length), withTemplate: "").filter { !$0.isWhitespace && $0 != "(" && $0 != ")" && $0 != "," }
+        let remaining = Self.entryRegex.stringByReplacingMatches(in: value, range: NSRange(location: 0, length: ns.length), withTemplate: "").filter { !$0.isWhitespace && $0 != "(" && $0 != ")" && $0 != "," }
         guard remaining.isEmpty else { throw HIDMappingError(message: "已有映射包含不支持的数据，拒绝修改。") }
         return try matches.map { match in
             let body = ns.substring(with: match.range(at: 1))

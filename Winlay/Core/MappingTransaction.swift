@@ -21,10 +21,12 @@ public struct MappingJournal: Codable, Equatable {
 public protocol DeviceMappingBackend {
     func read(device: DeviceIdentity) throws -> [KeyMapping]
     func readStates(device: DeviceIdentity) throws -> [[KeyMapping]]
+    func readSystemModifierMappings(device: DeviceIdentity) throws -> [[KeyMapping]]
     func write(device: DeviceIdentity, mappings: [KeyMapping]) throws
 }
 public extension DeviceMappingBackend {
     func readStates(device: DeviceIdentity) throws -> [[KeyMapping]] { [try read(device: device)] }
+    func readSystemModifierMappings(device: DeviceIdentity) throws -> [[KeyMapping]] { [] }
 }
 public protocol MappingJournalStore {
     func load() throws -> MappingJournal?

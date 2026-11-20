@@ -16,12 +16,30 @@ fi
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/winlay-build.XXXXXX")"
 trap 'rm -rf "$WORK"' EXIT
 STAGED_APP="$WORK/Winlay.app"
-mkdir -p "$STAGED_APP/Contents/MacOS" "$STAGED_APP/Contents/Resources"
+mkdir -p "$STAGED_APP/Contents/MacOS" "$STAGED_APP/Contents/Resources" "$STAGED_APP/Contents/Frameworks"
+
+SPARKLE_VERSION=2.10.1
+SPARKLE_SHA256=1a856d2a9edb8e628de88121d7be04cf0e2167f8641650b78fca00b14244cf27
+SPARKLE_DIR="${WINLAY_SPARKLE_DIR:-$WORK/sparkle}"
+if [[ ! -d "$SPARKLE_DIR/Sparkle.framework" ]]; then
+  mkdir -p "$SPARKLE_DIR"
+  curl -fsSL --retry 3 "https://github.com/sparkle-project/Sparkle/releases/download/$SPARKLE_VERSION/Sparkle-$SPARKLE_VERSION.tar.xz" -o "$WORK/sparkle.tar.xz"
+  printf '%s  %s\n' "$SPARKLE_SHA256" "$WORK/sparkle.tar.xz" | shasum -a 256 -c
+  tar -xJf "$WORK/sparkle.tar.xz" -C "$SPARKLE_DIR"
+fi
+ditto "$SPARKLE_DIR/Sparkle.framework" "$STAGED_APP/Contents/Frameworks/Sparkle.framework"
+APP_VERSION="${WINLAY_VERSION:-1.4}"
+APP_BUILD="${WINLAY_BUILD_NUMBER:-14}"
+if [[ ! "$APP_VERSION" =~ ^[0-9]+([.][0-9]+){0,2}$ || ! "$APP_BUILD" =~ ^[0-9]+([.][0-9]+){0,2}$ ]]; then
+  echo "版本号必须是数字，最多包含三个用点分隔的部分。" >&2
+  exit 1
+fi
 
 for ARCH in x86_64 arm64; do
   echo "正在编译 ${ARCH}…"
   xcrun swiftc -swift-version 5 -O -target "$ARCH-apple-macosx15.0" \
     -module-cache-path "$WORK/module-cache-$ARCH" \
+    -F "$SPARKLE_DIR" -framework Sparkle -Xlinker -rpath -Xlinker @executable_path/../Frameworks \
     -o "$WORK/Winlay-$ARCH" \
     "$ROOT/Winlay/WinlayApp.swift" "$ROOT"/Winlay/Core/*.swift \
     "$ROOT"/Winlay/Services/*.swift "$ROOT"/Winlay/Views/*.swift
@@ -34,6 +52,8 @@ PLIST=/usr/libexec/PlistBuddy
 "$PLIST" -c 'Set :CFBundleIdentifier com.songh.winlay' "$STAGED_APP/Contents/Info.plist"
 "$PLIST" -c 'Set :CFBundleExecutable Winlay' "$STAGED_APP/Contents/Info.plist"
 "$PLIST" -c 'Set :LSMinimumSystemVersion 15.0' "$STAGED_APP/Contents/Info.plist"
+"$PLIST" -c "Set :CFBundleShortVersionString $APP_VERSION" "$STAGED_APP/Contents/Info.plist"
+"$PLIST" -c "Set :CFBundleVersion $APP_BUILD" "$STAGED_APP/Contents/Info.plist"
 "$PLIST" -c 'Add :CFBundleIconFile string AppIcon' "$STAGED_APP/Contents/Info.plist"
 
 ICONS="$ROOT/Winlay/Assets.xcassets/AppIcon.appiconset"
