@@ -3,6 +3,14 @@
     <channel>
         <title>Winlay</title>
         <item>
+            <title>1.6</title>
+            <pubDate>Fri, 20 Nov 2026 14:58:54 +0800</pubDate>
+            <sparkle:version>16</sparkle:version>
+            <sparkle:shortVersionString>1.6</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <enclosure url="https://github.com/Songh0918/Winlay/releases/download/v16-beta1/Winlay-v16-beta1.zip" length="3308611" type="application/octet-stream" sparkle:edSignature="aQnD5EvjPSGOIOrU+SeoX/DkFQRV6fcNQ5qsgub8rdw3pqh79/jjAtwkbl3L+ekJf6aj3i02ZRKg1MAAlkXyDg=="/>
+        </item>
+        <item>
             <title>1.5</title>
             <pubDate>Wed, 11 Nov 2026 14:27:59 +0800</pubDate>
             <sparkle:version>15</sparkle:version>
