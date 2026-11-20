@@ -144,7 +144,7 @@ struct CheckForUpdatesButton: View {
         _availability = StateObject(wrappedValue: UpdateAvailability(updater: updater))
     }
     var body: some View {
-        Button("检查更新…") { updater.checkForUpdates() }.disabled(!availability.canCheck).modifier(GlassActions())
+        Button("检查更新…") { updater.checkForUpdates() }.disabled(!availability.canCheck)
     }
 }
 
@@ -153,20 +153,64 @@ struct MenuPanel: View {
     @Environment(\.openWindow) private var openWindow
     @State private var confirmingWindows = false
     let appDelegate: AppDelegate
+    private var statusColor: Color {
+        if model.errorMessage != nil { return .red }
+        if model.mappingActive { return .green }
+        if model.selectedHasRecovery { return .orange }
+        return .secondary
+    }
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack { Text("Winlay").font(.headline); Spacer(); Text(model.status).foregroundStyle(.secondary) }
+            HStack(spacing: 8) {
+                Text("Winlay").font(.headline)
+                Spacer()
+                Circle().fill(statusColor).frame(width: 8, height: 8)
+                Text(model.status).font(.subheadline).foregroundStyle(.secondary)
+            }
+            VStack(alignment: .leading, spacing: 10) {
+                Label(model.selectedDevice?.name ?? "未选择键盘", systemImage: "keyboard")
+                    .font(.subheadline.weight(.medium))
+                    .lineLimit(2)
+                HStack {
+                    Text("当前模式：\(model.mappingActive ? "自定义映射" : model.selectedHasRecovery ? "恢复待处理" : "完全原样")")
+                        .font(.caption).foregroundStyle(.secondary)
+                    Spacer()
+                    if !model.activeDevices.isEmpty {
+                        Text("生效 \(model.activeDevices.count) 台")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+                if model.mappingActive || model.selectedHasRecovery {
+                    Button { model.restoreMapping() } label: {
+                        Text("暂停并恢复当前键盘").frame(maxWidth: .infinity)
+                    }.controlSize(.regular)
+                } else {
+                    Button { confirmingWindows = true } label: {
+                        Text("启用 Mac 键位布局").frame(maxWidth: .infinity)
+                    }.controlSize(.regular).disabled(!model.canApply)
+                }
+            }
+            .padding(12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 10))
+
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(model.mappingReason)
+                    .font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                if model.offlineRecoveryCount > 0 {
+                    Spacer(minLength: 4)
+                    Button("清理旧记录") { model.clearOfflineRecoveryJournals() }
+                        .controlSize(.small)
+                }
+            }
             Divider()
-            Label(model.selectedDevice?.name ?? "未选择键盘", systemImage: "keyboard")
-                .lineLimit(2)
-            Text("当前模式：\(model.mappingActive ? "自定义映射" : model.selectedHasRecovery ? "恢复待处理" : "完全原样")").foregroundStyle(.secondary)
-            if model.mappingActive || model.selectedHasRecovery { Button("暂停并恢复当前键盘") { model.restoreMapping() } }
-            else { Button("启用 Mac 键位布局") { confirmingWindows = true }.disabled(!model.canApply) }
-            Text(model.mappingReason).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-            Divider()
-            Button("打开设置…") { openWindow(id: "settings"); NSApp.activate(ignoringOtherApps: true) }
-            CheckForUpdatesButton(updater: appDelegate.updaterController.updater)
-            Button("退出 Winlay") { NSApp.terminate(nil) }
+            HStack(spacing: 8) {
+                Button("打开设置…") { openWindow(id: "settings"); NSApp.activate(ignoringOtherApps: true) }
+                CheckForUpdatesButton(updater: appDelegate.updaterController.updater)
+                Spacer()
+                Button("退出 Winlay") { NSApp.terminate(nil) }
+            }
         }.padding(16).frame(width: 340, alignment: .leading)
         .alert("启用 Mac 键位布局？", isPresented: $confirmingWindows) {
             Button("取消", role: .cancel) {}
@@ -237,6 +281,7 @@ struct SettingsView: View {
                 if model.mappingActive || model.selectedHasRecovery { Button("暂停并恢复当前键盘") { model.restoreMapping() } }
                 else { Button("启用 Mac 键位布局") { confirmingWindows = true }.disabled(!model.canApply) }
                 if model.mappingActive { Button("检查当前映射") { model.verifyCurrentMapping() } }
+                if model.offlineRecoveryCount > 0 { Button("清理旧设备记录") { model.clearOfflineRecoveryJournals() } }
                 Button("重新检测") { model.refresh() }
             }.modifier(GlassActions())
         }

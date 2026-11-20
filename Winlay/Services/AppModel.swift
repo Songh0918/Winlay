@@ -120,6 +120,25 @@ import ServiceManagement
             return devices.contains { $0.matchingIdentity == saved.device }
         }
     }
+    var offlineRecoveryCount: Int {
+        guard let urls = try? journalURLs() else { return 0 }
+        return urls.filter { url in
+            guard let saved = try? FileMappingJournalStore(url: url).load() else { return false }
+            return !devices.contains { $0.matchingIdentity == saved.device }
+        }.count
+    }
+    func clearOfflineRecoveryJournals() {
+        do {
+            for url in try journalURLs() {
+                guard let saved = try? FileMappingJournalStore(url: url).load() else { continue }
+                guard !devices.contains(where: { $0.matchingIdentity == saved.device }) else { continue }
+                try FileMappingJournalStore(url: url).remove()
+            }
+            mappingMessage = nil
+        } catch {
+            mappingMessage = "无法清理旧恢复记录：\(error.localizedDescription)"
+        }
+    }
     var selectedHasRecovery: Bool {
         guard let identity = configuration.selectedDevice else { return false }
         if FileManager.default.fileExists(atPath: journalURL(identity).path) { return true }

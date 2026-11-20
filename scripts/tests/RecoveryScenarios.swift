@@ -77,6 +77,9 @@ final class ScenarioBackend: DeviceMappingBackend {
         precondition(movedModel.activeDevices.isEmpty && movedBackend.writes.isEmpty)
         precondition(FileManager.default.fileExists(atPath: journal(first, root: movedRoot).path))
         precondition(movedModel.mappingReason.contains("未连接"))
+        precondition(movedModel.offlineRecoveryCount == 1)
+        movedModel.clearOfflineRecoveryJournals()
+        precondition(movedModel.offlineRecoveryCount == 0 && !FileManager.default.fileExists(atPath: journal(first, root: movedRoot).path))
 
         // Ambiguous devices with the same identity but different names are never modified.
         let ambiguousRoot = base.appendingPathComponent("ambiguous")
