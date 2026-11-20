@@ -2,9 +2,119 @@ import SwiftUI
 import AppKit
 import Metal
 import Sparkle
+import UniformTypeIdentifiers
 
 private enum GlassGraphics {
     static let hasMetalDevice = MTLCreateSystemDefaultDevice() != nil
+}
+
+private struct ScrollProfileEditor: View {
+    @Binding var profile: ScrollProfile
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 24) {
+                Toggle("垂直滚动反向", isOn: $profile.reverseVertical)
+                Toggle("水平滚动反向", isOn: $profile.reverseHorizontal)
+            }
+            HStack(spacing: 24) {
+                Toggle("垂直平滑滚动", isOn: $profile.smoothVertical)
+                Toggle("水平平滑滚动", isOn: $profile.smoothHorizontal)
+            }
+            HStack {
+                Text("滚动速度").frame(width: 80, alignment: .leading)
+                Slider(value: $profile.speed, in: 0.25...4, step: 0.05)
+                Text("\(profile.effectiveSpeed, specifier: "%.2f")×").monospacedDigit().frame(width: 50)
+            }
+            HStack {
+                Text("平滑时长").frame(width: 80, alignment: .leading)
+                Slider(value: $profile.duration, in: 0.08...0.6, step: 0.01)
+                Text("\(profile.effectiveDuration, specifier: "%.2f") 秒").monospacedDigit().frame(width: 50)
+            }.disabled(!profile.smoothVertical && !profile.smoothHorizontal)
+        }
+    }
+}
+
+private struct MouseScrollView: View {
+    @EnvironmentObject private var model: AppModel
+    @ObservedObject var service: MouseScrollService
+    @State private var selectionError: String?
+
+    private var settings: MouseScrollSettings { model.configuration.mouseScroll ?? MouseScrollSettings() }
+    private func edit(_ body: (inout MouseScrollSettings) -> Void, prompt: Bool = false) {
+        var next = settings; body(&next); model.setMouseScroll(next, promptForPermission: prompt)
+    }
+    private var globalProfile: Binding<ScrollProfile> {
+        Binding(get: { settings.global }, set: { value in edit { $0.global = value } })
+    }
+    private func ruleProfile(_ id: String) -> Binding<ScrollProfile> {
+        Binding(get: { settings.applications.first(where: { $0.id == id })?.profile ?? ScrollProfile() }, set: { value in
+            edit { settings in if let index = settings.applications.firstIndex(where: { $0.id == id }) { settings.applications[index].profile = value } }
+        })
+    }
+    private func bypass(_ id: String) -> Binding<Bool> {
+        Binding(get: { settings.applications.first(where: { $0.id == id })?.bypass ?? true }, set: { value in
+            edit { settings in if let index = settings.applications.firstIndex(where: { $0.id == id }) { settings.applications[index].bypass = value } }
+        })
+    }
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Toggle("启用鼠标滚轮增强", isOn: Binding(get: { settings.enabled }, set: { value in edit({ $0.enabled = value }, prompt: value) }))
+            LabeledContent("状态", value: service.status)
+            if settings.enabled && service.status != "已开启" {
+                HStack {
+                    Button("重新检查权限") { model.setMouseScroll(settings, promptForPermission: true) }
+                    Button("打开辅助功能设置") {
+                        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") { NSWorkspace.shared.open(url) }
+                    }
+                }
+                Text("需要在系统设置中允许 Winlay 使用辅助功能，才能调整滚轮事件。")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            Text("只调整符合条件的离散滚轮事件，连续滚动和触控板手势会放行。系统不提供可靠的事件设备身份，部分高精度鼠标或非标准设备可能无法正确区分。")
+                .font(.caption).foregroundStyle(.secondary)
+            Divider()
+            Text("全局滚动设置").font(.headline)
+            ScrollProfileEditor(profile: globalProfile).disabled(!settings.enabled)
+            Divider()
+            HStack {
+                Text("应用例外").font(.headline)
+                Spacer()
+                Button("添加应用…") { chooseApplication() }
+            }
+            Text("根据前台应用应用例外；可跳过处理或为应用单独设置滚动方式。")
+                .font(.caption).foregroundStyle(.secondary)
+            if let selectionError { Text(selectionError).foregroundStyle(.red) }
+            if settings.applications.isEmpty { Text("尚未添加应用例外。 ").foregroundStyle(.secondary) }
+            ForEach(settings.applications) { rule in
+                DisclosureGroup(rule.name) {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Toggle("在此应用中跳过滚轮处理", isOn: bypass(rule.id))
+                        if !rule.bypass { ScrollProfileEditor(profile: ruleProfile(rule.id)) }
+                        Button("移除此应用", role: .destructive) { edit { $0.applications.removeAll { $0.id == rule.id } } }
+                    }.padding(.vertical, 8)
+                }
+            }
+            Text("启用时只处理滚轮事件，不记录或上传输入内容。与其他滚轮增强工具同时启用可能互相影响。")
+                .font(.caption).foregroundStyle(.secondary)
+        }
+    }
+    private func chooseApplication() {
+        let panel = NSOpenPanel()
+        panel.title = "选择应用"
+        panel.allowedContentTypes = [.applicationBundle]
+        panel.canChooseDirectories = false; panel.canChooseFiles = true; panel.allowsMultipleSelection = false
+        panel.directoryURL = URL(fileURLWithPath: "/Applications", isDirectory: true)
+        panel.begin { response in
+            guard response == .OK, let url = panel.url else { return }
+            guard let bundle = Bundle(url: url), let id = bundle.bundleIdentifier, !id.isEmpty else {
+                selectionError = "无法识别该应用，请选择有效的应用程序。"; return
+            }
+            guard !settings.applications.contains(where: { $0.id == id }) else { selectionError = "该应用已添加。"; return }
+            let name = (bundle.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String) ?? (bundle.object(forInfoDictionaryKey: "CFBundleName") as? String) ?? url.deletingPathExtension().lastPathComponent
+            edit { $0.applications.append(ScrollApplicationRule(bundleIdentifier: id, name: name, profile: $0.global)) }
+            selectionError = nil
+        }
+    }
 }
 
 private struct GlassActions: ViewModifier {
@@ -66,10 +176,10 @@ struct MenuPanel: View {
 }
 
 enum SectionID: String, CaseIterable, Identifiable {
-    case overview = "概览", keys = "按键", shortcuts = "快捷键", devices = "设备", settings = "设置"
+    case overview = "概览", keys = "按键", mouse = "鼠标", shortcuts = "快捷键", devices = "设备", settings = "设置"
     var id: String { rawValue }
     var icon: String {
-        switch self { case .overview: return "house"; case .keys: return "keyboard"; case .shortcuts: return "command"; case .devices: return "cable.connector"; case .settings: return "gearshape" }
+        switch self { case .overview: return "house"; case .keys: return "keyboard"; case .mouse: return "computermouse"; case .shortcuts: return "command"; case .devices: return "cable.connector"; case .settings: return "gearshape" }
     }
 }
 
@@ -93,6 +203,7 @@ struct SettingsView: View {
                     switch model.selection ?? .overview {
                     case .overview: overview
                     case .keys: keys
+                    case .mouse: MouseScrollView(service: model.mouseScrollService)
                     case .shortcuts: shortcuts
                     case .devices: deviceList
                     case .settings: settings
@@ -160,8 +271,26 @@ struct SettingsView: View {
         VStack(alignment: .leading, spacing: 12) {
             Text("常用快捷键").font(.headline)
             Text("启用左侧 Alt → Command 后，可使用 Alt+C 复制、Alt+V 粘贴、Alt+X 剪切、Alt+Z 撤销、Alt+A 全选、Alt+S 保存。")
-            Text("这些组合使用的是按键映射，不是独立的组合键规则。单条快捷键开关、自定义组合和应用例外尚未实现。")
+            Text("这些组合使用的是系统 HID 驱动层单键映射（优先级高于浏览器和普通应用），不是独立的组合键规则。单条快捷键开关、自定义组合和应用例外尚未实现。")
                 .foregroundStyle(.secondary)
+            Divider()
+            HStack {
+                Text("快捷键环境诊断").font(.headline)
+                Spacer()
+                Button("检查快捷键状态") { model.inspectShortcutEnvironment() }
+            }
+            Text("如果在部分浏览器输入框中无法触发 Cmd+空格 或其他快捷键，通常不是映射优先级不足，而是中文输入法组词态、密码框安全输入、网页脚本或浏览器扩展拦截了按键，或系统快捷键分配冲突。")
+                .font(.caption).foregroundStyle(.secondary)
+            if !model.shortcutDiagnostics.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(Array(model.shortcutDiagnostics.enumerated()), id: \.offset) { _, line in
+                        Text("• \(line)").font(.caption).textSelection(.enabled)
+                    }
+                }
+                .padding(10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 8))
+            }
         }
     }
     private var deviceList: some View {

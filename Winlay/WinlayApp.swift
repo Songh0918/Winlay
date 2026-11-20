@@ -28,6 +28,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         model.restoreAllMappings()
         return model.hasConnectedRecovery ? .terminateCancel : .terminateNow
     }
+    func applicationWillTerminate(_ notification: Notification) { model?.mouseScrollService.shutdown() }
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         if let reopenSettings { reopenSettings() }
         else if let window = sender.windows.first(where: { $0.canBecomeKey }) { window.makeKeyAndOrderFront(nil) }

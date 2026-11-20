@@ -12,11 +12,14 @@ import ServiceManagement
     @Published var showingOnboarding = false
     @Published private(set) var activeDevices: Set<DeviceIdentity> = []
     @Published var mappingMessage: String?
+    @Published private(set) var shortcutDiagnostics: [String] = []
+    let mouseScrollService = MouseScrollService()
     private let deviceManager: KeyboardDeviceManager
     private let deviceProvider: () -> [KeyboardDevice]
     private let backend: any DeviceMappingBackend
     private let root: URL
     private let store: ConfigurationStore
+    private let managesMouseScroll: Bool
     private var timer: Timer?
     private var wakeObserver: NSObjectProtocol?
     private var configurationWritable = true
@@ -29,6 +32,7 @@ import ServiceManagement
         deviceManager = manager
         self.deviceProvider = deviceProvider ?? { manager.devices() }
         self.backend = backend
+        managesMouseScroll = observeSystemEvents
         self.root = root ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("Winlay")
         store = ConfigurationStore(url: self.root.appendingPathComponent("configuration.json"))
         do { configuration = try store.load() } catch { errorMessage = "配置读取失败，已停止覆盖原文件：\(error.localizedDescription)"; configurationWritable = false }
@@ -36,9 +40,14 @@ import ServiceManagement
         if observeSystemEvents { refresh() } else { refreshDevices() }
         recoverOnStart()
         if observeSystemEvents {
+            mouseScrollService.update(configuration.mouseScroll ?? MouseScrollSettings())
             scheduleDeviceRefresh()
             wakeObserver = NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in Task { @MainActor in self?.refreshAfterWake() } }
         }
+    }
+    deinit {
+        timer?.invalidate()
+        if let wakeObserver { NSWorkspace.shared.notificationCenter.removeObserver(wakeObserver) }
     }
     private func scheduleDeviceRefresh() {
         timer?.invalidate()
@@ -150,6 +159,19 @@ import ServiceManagement
         let returned = disconnectedDevices.filter { identity in current.contains { $0.matchingIdentity == identity } }
         if !returned.isEmpty { disconnectedDevices.subtract(returned); mappingMessage = "键盘已重新连接，请先恢复映射，再重新启用。" }
         resumeStartupDevices()
+        if managesMouseScroll { mouseScrollService.refreshAuthorization() }
+    }
+    func setMouseScroll(_ settings: MouseScrollSettings, promptForPermission: Bool = false) {
+        guard configurationWritable else { return }
+        let previous = configuration.mouseScroll
+        guard previous != settings else {
+            if managesMouseScroll && promptForPermission { mouseScrollService.update(settings, promptForPermission: true) }
+            return
+        }
+        configuration.mouseScroll = settings
+        save()
+        guard configurationWritable else { configuration.mouseScroll = previous; return }
+        if managesMouseScroll { mouseScrollService.update(settings, promptForPermission: promptForPermission) }
     }
     func applyWindows() {
         guard canApply, let identity = selectedDevice?.matchingIdentity else { return }
@@ -175,10 +197,63 @@ import ServiceManagement
                 mappingMessage = "系统映射已变化或接口数量改变；请检查后恢复，Winlay 不会覆盖其他程序的修改。"
                 return
             }
-            mappingMessage = "系统中各接口的映射与记录一致；实际快捷键仍需在目标应用中验证。"
+            let systemModifierCount = Set(((try? backend.readSystemModifierMappings(device: identity)) ?? []).flatMap { $0 }).count
+            if systemModifierCount > 0 {
+                mappingMessage = "系统中各接口的映射与记录一致，但 macOS“修饰键”设置中也存在 \(systemModifierCount) 条映射，可能与 Winlay 叠加导致快捷键异常。"
+            } else {
+                mappingMessage = "系统中各接口的映射与记录一致（共 \(states.count) 个 HID 接口）；映射运行在系统 HID 驱动层，实际快捷键仍需在目标应用中验证。"
+            }
         } catch {
             mappingMessage = "无法检查系统映射：\(error.localizedDescription)"
         }
+    }
+    func inspectShortcutEnvironment() {
+        var lines: [String] = []
+        if let identity = configuration.selectedDevice {
+            if mappingActive {
+                do {
+                    let states = try backend.readStates(device: identity)
+                    let saved = try FileMappingJournalStore(url: journalURL(identity)).load()
+                    if let saved, saved.matchesApplied(states: states) {
+                        lines.append("HID 映射层：正常（已写入 \(states.count) 个键盘 HID 服务，位于系统驱动层，优先级高于浏览器与应用）。")
+                    } else {
+                        lines.append("HID 映射层：当前系统映射与记录不一致，建议在“概览”中检查并重新应用。")
+                    }
+                } catch {
+                    lines.append("HID 映射层：读取失败（\(error.localizedDescription)）。")
+                }
+            } else {
+                lines.append("HID 映射层：当前键盘尚未启用映射。")
+            }
+            let systemModifierCount = Set(((try? backend.readSystemModifierMappings(device: identity)) ?? []).flatMap { $0 }).count
+            if systemModifierCount > 0 {
+                lines.append("系统修饰键冲突：检测到 macOS 系统设置“修饰键”同时包含 \(systemModifierCount) 条映射，建议还原系统修饰键设置以避免重复交换。")
+            } else {
+                lines.append("系统修饰键冲突：未发现与 macOS 系统设置“修饰键”的叠加映射。")
+            }
+        } else {
+            lines.append("HID 映射层：尚未选择键盘。")
+        }
+        let hotkeys = UserDefaults(suiteName: "com.apple.symbolichotkeys")?.dictionary(forKey: "AppleSymbolicHotKeys")
+        lines.append("系统聚焦（Spotlight）：\(Self.describeSymbolicHotkey(hotkeys?["64"]))")
+        lines.append("切换上一个输入源：\(Self.describeSymbolicHotkey(hotkeys?["60"]))")
+        let scrollEnabled = (configuration.mouseScroll?.enabled ?? false)
+        lines.append("滚轮事件钩子：\(scrollEnabled ? "已开启（仅监听滚轮事件，状态：\(mouseScrollService.status)）" : "未开启（不挂接任何 CGEventTap）")。")
+        shortcutDiagnostics = lines
+    }
+    private static func describeSymbolicHotkey(_ raw: Any?) -> String {
+        guard let entry = raw as? [String: Any] else { return "系统默认或未读取到配置" }
+        guard (entry["enabled"] as? Bool) ?? ((entry["enabled"] as? NSNumber)?.boolValue ?? false) else { return "未启用" }
+        guard let value = entry["value"] as? [String: Any], let params = value["parameters"] as? [NSNumber], params.count >= 3 else { return "已启用（自定义）" }
+        let keyCode = params[1].intValue
+        let modifiers = params[2].uint64Value
+        var parts = ""
+        if (modifiers & (1 << 18)) != 0 { parts += "⌃" }
+        if (modifiers & (1 << 19)) != 0 { parts += "⌥" }
+        if (modifiers & (1 << 17)) != 0 { parts += "⇧" }
+        if (modifiers & (1 << 20)) != 0 { parts += "⌘" }
+        let keyName = keyCode == 49 ? "空格" : "键码 \(keyCode)"
+        return "已启用（\(parts.isEmpty ? keyName : "\(parts) \(keyName)")）"
     }
     func restoreMapping() {
         guard let identity = configuration.selectedDevice else { return }

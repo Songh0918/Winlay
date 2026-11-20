@@ -74,8 +74,12 @@ public struct KeyboardDevice: Identifiable, Equatable {
     public init(id: String, name: String, vendorID: Int?, productID: Int?, locationID: Int?, transport: String, builtIn: Bool?) {
         self.id = id; self.name = name; self.vendorID = vendorID; self.productID = productID; self.locationID = locationID; self.transport = transport; self.builtIn = builtIn
     }
+    public static func isSupportedExternalTransport(_ transport: String) -> Bool {
+        let normalized = transport.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return normalized == "usb" || normalized.hasPrefix("bluetooth")
+    }
     public var matchingIdentity: DeviceIdentity? {
-        guard (builtIn == true || builtIn == false || ["usb", "bluetooth"].contains(transport.lowercased())), let vendorID, vendorID > 0, let productID, productID > 0, let locationID, locationID > 0 else { return nil }
+        guard (builtIn == true || builtIn == false || Self.isSupportedExternalTransport(transport)), let vendorID, vendorID > 0, let productID, productID > 0, let locationID, locationID > 0 else { return nil }
         return DeviceIdentity(vendorID: vendorID, productID: productID, locationID: locationID)
     }
 }
@@ -110,6 +114,8 @@ public struct Configuration: Codable, Equatable {
     public var showMenuBarIcon: Bool? = nil
     // Devices explicitly enabled by the user, retained across normal app restarts.
     public var enabledDevices: [DeviceIdentity]? = nil
+    // Absent in older configurations; scrolling remains disabled until explicitly enabled.
+    var mouseScroll: MouseScrollSettings? = nil
     public var effectiveDeviceRefreshInterval: Double {
         guard let interval = deviceRefreshInterval, interval.isFinite, (0.5...30).contains(interval) else { return 2 }
         return interval

@@ -4,11 +4,15 @@ enum SectionID { case overview }
 
 final class ScenarioBackend: DeviceMappingBackend {
     var states: [DeviceIdentity: [[KeyMapping]]] = [:]
+    var systemModifiers: [DeviceIdentity: [[KeyMapping]]] = [:]
     var writes: [DeviceIdentity: Int] = [:]
     func read(device: DeviceIdentity) throws -> [KeyMapping] { try readStates(device: device)[0] }
     func readStates(device: DeviceIdentity) throws -> [[KeyMapping]] {
         guard let state = states[device] else { throw HIDMappingError(message: "设备未连接") }
         return state
+    }
+    func readSystemModifierMappings(device: DeviceIdentity) throws -> [[KeyMapping]] {
+        systemModifiers[device] ?? []
     }
     func write(device: DeviceIdentity, mappings: [KeyMapping]) throws {
         guard let current = states[device] else { throw HIDMappingError(message: "设备未连接") }
@@ -109,6 +113,21 @@ final class ScenarioBackend: DeviceMappingBackend {
         precondition(FileManager.default.fileExists(atPath: journal(first, root: failureRoot).path))
         precondition(!FileManager.default.fileExists(atPath: journal(second, root: failureRoot).path))
         precondition(failureModel.mappingMessage?.contains("无法恢复") == true)
-        print("通过：延迟连接、唤醒冲突、USB 换位、设备身份冲突、多键盘、断线重连及部分恢复失败。")
+        // System modifier key conflict detection and BLE transport support.
+        precondition(KeyboardDevice.isSupportedExternalTransport("BluetoothLowEnergy"))
+        precondition(KeyboardDevice.isSupportedExternalTransport("Bluetooth LE"))
+        precondition(!KeyboardDevice.isSupportedExternalTransport("SPI"))
+        let diagRoot = base.appendingPathComponent("diag")
+        try configuration([first], root: diagRoot)
+        let diagBackend = ScenarioBackend(); diagBackend.states[first] = [[], []]
+        diagBackend.systemModifiers[first] = [[KeyMapping(source: 0xe2, destination: 0xe3)], []]
+        let diagModel = AppModel(root: diagRoot, deviceProvider: { [device(first), device(first, "b")] }, backend: diagBackend, observeSystemEvents: false)
+        precondition(diagModel.activeDevices.contains(first))
+        diagModel.verifyCurrentMapping()
+        precondition(diagModel.mappingMessage?.contains("修饰键") == true)
+        diagModel.inspectShortcutEnvironment()
+        precondition(diagModel.shortcutDiagnostics.contains(where: { $0.contains("系统修饰键冲突：检测到") }))
+
+        print("通过：延迟连接、唤醒冲突、USB 换位、设备身份冲突、多键盘、断线重连、部分恢复失败及系统修饰键冲突检测。")
     }
 }
